@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logistics Truck Optimizer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f7fc;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    h1 {
+      font-size: 2em;
+      color: #333;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    #optimizer-form {
+      background-color: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 500px;
+    }
+    label {
+      font-size: 1.1em;
+      color: #333;
+      display: block;
+      margin-bottom: 8px;
+    }
+    input[type="file"] {
+      width: 100%;
+      padding: 10px;
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      font-size: 1em;
+      margin-bottom: 15px;
+      background-color: #fafafa;
+    }
+    input[type="file"]:focus {
+      outline: none;
+      border-color: #4CAF50;
+      background-color: #f0f9f4;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      background-color: #4CAF50;
+      border: none;
+      color: white;
+      font-size: 1.2em;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    button:disabled {
+      background-color: #cfcfcf;
+      cursor: not-allowed;
+    }
+    .form-container {
+      text-align: center;
+    }
+    #loading {
+      display: none;
+      color: #4CAF50;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="form-container">
+    <h1>Logistics Truck Optimizer</h1>
+    <form id="optimizer-form" enctype="multipart/form-data">
+      <label for="deliveries">Upload Deliveries CSV:</label>
+      <input type="file" id="deliveries" name="deliveries" accept=".csv" required />
+      <label for="goodsMaster">Upload Goods Master CSV:</label>
+      <input type="file" id="goodsMaster" name="goodsMaster" accept=".csv" />
+      <label for="truckMaster">Upload Truck Master CSV:</label>
+      <input type="file" id="truckMaster" name="truckMaster" accept=".csv" required />
+      <button type="submit" id="submit-btn">Optimize</button>
+      <div id="loading">Processing... Please wait</div>
+    </form>
+  </div>
+  <script>
+    document.getElementById("optimizer-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      
+      // Disable submit button and show loading
+      const submitBtn = document.getElementById("submit-btn");
+      const loadingDiv = document.getElementById("loading");
+      submitBtn.disabled = true;
+      loadingDiv.style.display = "block";
+
+      const formData = new FormData();
+      formData.append("deliveries", document.getElementById("deliveries").files[0]);
+      formData.append("truckMaster", document.getElementById("truckMaster").files[0]);
+      const goodsMasterInput = document.getElementById("goodsMaster");
+      if (goodsMasterInput?.files?.length > 0) {
+        formData.append("goodsMaster", goodsMasterInput.files[0]);
+      }
+
+      try {
+        const response = await fetch("/optimize", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (response.status === 202) {
+      // Show a pop-up or message indicating the process has started
+      alert("Optimization process started. Please wait...");
+
+      // Periodically check if the process is complete
+      const checkStatus = async () => {
+        const statusResponse = await fetch("/check-optimization-status");
+        const statusData = await statusResponse.json();
+
+        if (statusData.status === "complete") {
+          // Redirect to map.html once processing is complete
+          window.location.href = "/map.html";
+        } else {
+          // Check again after a delay
+          setTimeout(checkStatus, 5000);
+        }
+      };
+
+      checkStatus();
+    } else {
+          // If not redirected, show error
+          alert("Error during optimization. Check server logs for details.");
+          
+          // Re-enable submit button and hide loading
+          submitBtn.disabled = false;
+          loadingDiv.style.display = "none";
+        }
+      } catch (error) {
+        console.error("Optimization error:", error);
+        alert("Network error occurred. Please try again.");
+        
+        // Re-enable submit button and hide loading
+        submitBtn.disabled = false;
+        loadingDiv.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
