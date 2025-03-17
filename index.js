@@ -180,7 +180,7 @@ async function getRoadRouteDistance(origin, destination, originPincode) {
           overview: "false",
           annotations: "distance",
         },
-        timeout: 15000, // 15 second timeout
+        timeout: 30000, // 30 second timeout
       }
     ));
 
@@ -757,7 +757,10 @@ app.post("/optimize", upload.fields([
   { name: "goodsMaster", maxCount: 1 },
 ]), async (req, res) => {
   try {
-     console.log("Uploaded Files Details:", req.files);
+    globalClusters = [];
+    // coordinatesCache.flushAll();
+    // routeCache.flushAll();
+    console.log("Uploaded Files Details:", req.files);
     initializeRateLimiters();
     console.log("Received optimization request");
     
