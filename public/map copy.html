@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delivery Route Optimization</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: Arial, sans-serif;
+        }
+
+        #mapContainer {
+            display: flex;
+            height: calc(100vh - 60px);
+            /* Adjust for download button */
+        }
+
+        #map {
+            flex-grow: 1;
+            height: 100%;
+            position: relative;
+        }
+
+        #sidebar {
+            width: 0;
+            background-color: #f8f9fa;
+            overflow-x: hidden;
+            transition: 0.3s;
+            padding-top: 20px;
+            box-shadow: -2px 0 5px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+        }
+
+        #sidebarContent {
+            padding: 20px;
+        }
+
+        #clustersInfo {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 10px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.7);
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .cluster-info {
+            padding: 8px 12px;
+            background-color: #007bff;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            text-align: center;
+            opacity: 0.9;
+        }
+
+        .cluster-info:hover {
+            background-color: #0056b3;
+        }
+
+        #sidebarCloseBtn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+        }
+
+        .cluster-detail-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f1f3f5;
+            border-radius: 5px;
+        }
+
+        #downloadButtonContainer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+        }
+
+        #download-btn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        #download-btn:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="mapContainer">
+        <div id="map"></div>
+        <div id="sidebar">
+            <button id="sidebarCloseBtn">&times;</button>
+            <div id="sidebarContent"></div>
+        </div>
+    </div>
+
+    <div id="clustersInfo"></div>
+
+    <div id="downloadButtonContainer">
+        <button id="download-btn">Download Optimized CSV</button>
+    </div>
+
+    <script>
+        let map;
+        let markerLayers = [];
+        let routeLayers = [];
+        let clusters = [];
+
+        function initMap() {
+            map = L.map('map').setView([20.5937, 78.9629], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+
+            fetch('/get-optimized-clusters')
+                .then(response => response.json())
+                .then(data => {
+                    clusters = data.clusters;
+                    displayClusters(clusters);
+                })
+                .catch(error => console.error('Error fetching clusters:', error));
+
+            // Add download button event listener
+            document.getElementById('download-btn').addEventListener('click', function () {
+                fetch('/download-optimized-csv')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.blob();
+                    })
+                    .then(blob => {
+                        // Create a link element, use it to download the blob, then remove it
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = 'optimized_deliveries.csv';
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                    })
+                    .catch(error => {
+                        console.error('Download error:', error);
+                        alert('Error downloading the CSV file');
+                    });
+            });
+        }
+
+        function getUniqueClusterColor(clusterIndex) {
+            const colors = [
+                '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0',
+                '#9966FF', '#FF9F40', '#FF5733', '#33FF57',
+                '#3357FF', '#FF33F6', '#33FFF6', '#F6FF33'
+            ];
+            return colors[clusterIndex % colors.length];
+        }
+
+        function fetchRoadRoute(coordinates) {
+            const osrmEndpoint = 'https://router.project-osrm.org/route/v1/driving/';
+            const coordinatesStr = coordinates.map(coord => `${coord[0]},${coord[1]}`).join(';');
+
+            return fetch(`${osrmEndpoint}${coordinatesStr}?overview=full&geometries=geojson`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.routes && data.routes.length > 0) {
+                        return {
+                            coordinates: data.routes[0].geometry.coordinates,
+                            distance: data.routes[0].distance / 1000 // Convert to kilometers
+                        };
+                    }
+                    throw new Error('No route found');
+                });
+        }
+
+        function displayClusters(clusters) {
+            const clustersInfoDiv = document.getElementById('clustersInfo');
+            clustersInfoDiv.innerHTML = '';
+
+            clusters.forEach((cluster, clusterIndex) => {
+                // Calculate total weight and volume for the cluster
+                const totalWeight = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.weight || 0), 0);
+                const totalVolume = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.volume || 0), 0);
+
+                // Store these values in the cluster object for later use
+                cluster.totalWeight = totalWeight;
+                cluster.totalVolume = totalVolume;
+
+                const clusterButton = document.createElement('div');
+                clusterButton.classList.add('cluster-info');
+                clusterButton.innerHTML = `Cluster ${cluster.clusterId}`;
+                clusterButton.addEventListener('click', () => toggleClusterVisibility(clusterIndex));
+                clustersInfoDiv.appendChild(clusterButton);
+
+                const clusterLayerGroup = L.layerGroup().addTo(map);
+                markerLayers.push(clusterLayerGroup);
+
+                // Get unique color for the entire cluster
+                const clusterColor = getUniqueClusterColor(clusterIndex);
+
+                // Sort deliveries by stop order
+                const sortedDeliveries = [...cluster.deliveries].sort((a, b) => a.stopOrder - b.stopOrder);
+
+                // Add origin markers for each delivery in sortedDeliveries
+                sortedDeliveries.forEach((delivery, index) => {
+                    L.marker(
+                        [cluster.allOriginCoordinates[index].lat, cluster.allOriginCoordinates[index].lng],
+                        {
+                            icon: L.icon({
+                                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+                                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png'
+                            })
+                        }
+                    )
+                        .bindTooltip(
+                            `Cluster ID: ${cluster.clusterId}<br>Origin Pincode: ${delivery.originPincode} - Origin ${index + 1}`,
+                            {
+                                permanent: false,
+                                direction: 'top',
+                                className: 'marker-label'
+                            }
+                        )
+                        .addTo(clusterLayerGroup);
+                });
+
+
+                // Add destination markers for all deliveries
+                cluster.deliveries.forEach(delivery => {
+                    L.circleMarker([delivery.coordinates.lat, delivery.coordinates.lng], {
+                        radius: 10,
+                        fillColor: 'red',
+                        color: '#000',
+                        weight: 1,
+                        opacity: 1,
+                        fillOpacity: 0.8
+                    })
+                        .bindTooltip(
+                            `Delivery ID: ${delivery.deliveryId}<br>Destination Pincode: ${delivery.destinationPincode}<br>Drop Sequence: ${delivery.stopOrder}`,
+                            {
+                                permanent: false,
+                                direction: 'top',
+                                className: 'marker-label'
+                            }
+                        )
+                        .addTo(clusterLayerGroup);
+                });
+
+                // Global variable to track cluster route details
+                cluster.totalRouteDistance = 0;
+
+                // Sequential route drawing
+                function drawSequentialRoutes(deliveries, startIndex = 0) {
+                    // If no deliveries, stop
+                    if (startIndex >= deliveries.length) return Promise.resolve();
+
+                    const currentDelivery = deliveries[startIndex];
+                    let routeCoordinates;
+
+                    // Handle case with a single origin
+                    if (deliveries.length === 1) {
+                        routeCoordinates = [
+                            [cluster.allOriginCoordinates[0].lng, cluster.allOriginCoordinates[0].lat], // Single origin
+                            [currentDelivery.coordinates.lng, currentDelivery.coordinates.lat], // Destination
+                        ];
+                    }
+                    // First iteration: From cluster's main origin to the first origin
+                    else if (startIndex === 0) {
+                        routeCoordinates = [
+                            [cluster.originCoordinates.lng, cluster.originCoordinates.lat], // Cluster's main origin
+                            [cluster.allOriginCoordinates[startIndex].lng, cluster.allOriginCoordinates[startIndex].lat], // First origin
+                        ];
+                    }
+                    // Last iteration: From the last origin to the destination
+                    else if (startIndex === deliveries.length - 1) {
+                        routeCoordinates = [
+                            [cluster.allOriginCoordinates[startIndex].lng, cluster.allOriginCoordinates[startIndex].lat], // Last origin
+                            [currentDelivery.coordinates.lng, currentDelivery.coordinates.lat], // Delivery destination
+                        ];
+                    }
+                    // Intermediate iterations: Between consecutive origins
+                    else {
+                        routeCoordinates = [
+                            [cluster.allOriginCoordinates[startIndex].lng, cluster.allOriginCoordinates[startIndex].lat], // Current origin
+                            [cluster.allOriginCoordinates[startIndex + 1].lng, cluster.allOriginCoordinates[startIndex + 1].lat], // Next origin
+                        ];
+                    }
+
+                    // Fetch the route and draw it
+                    return fetchRoadRoute(routeCoordinates)
+                        .then((routeData) => {
+                            const routeLayer = L.geoJSON(
+                                { type: 'LineString', coordinates: routeData.coordinates },
+                                {
+                                    style: {
+                                        color: clusterColor,
+                                        weight: 5,
+                                        opacity: 0.7,
+                                    },
+                                }
+                            )
+                                .bindTooltip(
+                                    `Cluster ID: ${cluster.clusterId}<br>Route Distance: ${routeData.distance.toFixed(2)} km`,
+                                    { permanent: false, direction: 'top', className: 'route-tooltip' }
+                                )
+                                .addTo(clusterLayerGroup);
+
+                            routeLayers.push(routeLayer);
+
+                            // Accumulate total route distance
+                            cluster.totalRouteDistance = (cluster.totalRouteDistance || 0) + routeData.distance;
+
+                            // Recursively draw the next route
+                            return drawSequentialRoutes(deliveries, startIndex + 1);
+                        })
+                        .catch((error) => console.error('Error fetching route:', error));
+                }
+
+                // Start drawing routes
+                drawSequentialRoutes(sortedDeliveries);
+            });
+
+
+            document.getElementById('sidebarCloseBtn').addEventListener('click', closeSidebar);
+        }
+
+        function toggleClusterVisibility(selectedClusterIndex) {
+            // Hide all clusters first
+            markerLayers.forEach((layer, index) => {
+                layer.removeFrom(map);
+            });
+
+            // Show only the selected cluster
+            markerLayers[selectedClusterIndex].addTo(map);
+
+            // Show selected cluster details in sidebar
+            showClusterDetails(clusters[selectedClusterIndex], selectedClusterIndex);
+        }
+
+        function showClusterDetails(cluster, clusterIndex) {
+            const sidebar = document.getElementById('sidebar');
+            const sidebarContent = document.getElementById('sidebarContent');
+
+            sidebar.style.width = '350px';
+
+            const sortedDeliveries = [...cluster.deliveries].sort((a, b) => a.stopOrder - b.stopOrder);
+
+            sidebarContent.innerHTML = `
+                <h2>Cluster ${cluster.clusterId} Details</h2>
+                <div class="cluster-detail-item">
+                    <strong>Selected Vehicle:</strong> ${cluster.selectedTruck}
+                </div>
+                <div class="cluster-detail-item">
+                    <strong>Total Route Distance:</strong> ${cluster.totalRouteDistance.toFixed(2)} km
+                </div>
+                <div class="cluster-detail-item">
+                    <strong>Total Weight:</strong> ${cluster.totalWeight.toFixed(2)} kg
+                </div>
+                <div class="cluster-detail-item">
+                    <strong>Total Volume:</strong> ${cluster.totalVolume.toFixed(2)} cft
+                </div>
+                <div class="cluster-detail-item">
+                    <h3>Delivery Sequence</h3>
+                    <ul>
+                        ${sortedDeliveries.map(delivery => `
+                            <li>
+                                <strong>Delivery ID:</strong> ${delivery.deliveryId} <br>
+                                <strong>Destination Pincode:</strong> ${delivery.destinationPincode} <br>
+                                <strong>Drop Sequence:</strong> ${delivery.stopOrder}
+                            </li>
+                        `).join('')}
+                    </ul>
+                </div>
+            `;
+        }
+
+        function closeSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.style.width = '0';
+
+            // Restore visibility of all clusters
+            markerLayers.forEach(layer => {
+                layer.addTo(map);
+            });
+        }
+
+        initMap();
+    </script>
+</body>
+
+</html>
