@@ -42,32 +42,73 @@
             padding: 20px;
         }
 
-        #clustersInfo {
-            position: absolute;
-            top: 10px;
-            left: 50%;
-            transform: translateX(-50%);
+        #clusterNavigationContainer {
+        position: fixed;
+        top: 10px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 5px 10px;
+        z-index: 1000;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+       }
+
+        #clusterButtonsContainer {
             display: flex;
-            gap: 10px;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.7);
-            padding: 10px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+            flex-wrap: nowrap;
+            gap: 5px;
+            overflow-x: hidden;
+            max-width: 80vw;
         }
 
-        .cluster-info {
+        .cluster-button {
             padding: 8px 12px;
             background-color: #007bff;
             color: white;
+            border: none;
             border-radius: 5px;
             cursor: pointer;
+            white-space: nowrap;
+            font-weight: bold;
+            min-width: 80px;
             text-align: center;
-            opacity: 0.9;
         }
-
-        .cluster-info:hover {
+        .cluster-button:hover {
             background-color: #0056b3;
+        }
+        
+        .cluster-button.active {
+            background-color: #28a745;
+        }
+  
+        .nav-arrow {
+            padding: 8px 15px;
+            background-color: #343a40;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 0 10px;
+        }
+        
+        .nav-arrow:hover {
+            background-color: #23272b;
+        }
+        
+        .nav-arrow:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        
+        .page-indicator {
+            margin-left: 10px;
+            font-weight: bold;
+            color: #343a40;
         }
 
         #sidebarCloseBtn {
@@ -124,7 +165,11 @@
         </div>
     </div>
 
-    <div id="clustersInfo"></div>
+    <div id="clusterNavigationContainer">
+        <button id="prevPage" class="nav-arrow">&lt;</button>
+        <div id="clusterButtonsContainer"></div>
+        <button id="nextPage" class="nav-arrow">&gt;</button>
+      </div>
 
     <div id="downloadButtonContainer">
         <button id="download-btn">Download Optimized CSV</button>
@@ -135,6 +180,73 @@
         let markerLayers = [];
         let routeLayers = [];
         let clusters = [];
+
+        let currentPageIndex = 0;
+        const clustersPerPage = 10;
+
+        function initClusterNavigation(clusters) {
+            const totalPages = Math.ceil(clusters.length / clustersPerPage);
+            const prevButton = document.getElementById('prevPage');
+            const nextButton = document.getElementById('nextPage');
+            
+            // Add event listeners for navigation
+            prevButton.addEventListener('click', () => {
+            if (currentPageIndex > 0) {
+                currentPageIndex--;
+                renderClusterPage();
+            }
+            });
+            
+            nextButton.addEventListener('click', () => {
+            if (currentPageIndex < totalPages - 1) {
+                currentPageIndex++;
+                renderClusterPage();
+           }
+       });
+    
+    function renderClusterPage() {
+      const container = document.getElementById('clusterButtonsContainer');
+      container.innerHTML = '';
+      
+      // Calculate page range
+      const startIdx = currentPageIndex * clustersPerPage;
+      const endIdx = Math.min(startIdx + clustersPerPage, clusters.length);
+      
+      // Create page indicator
+      const pageIndicator = document.createElement('div');
+      pageIndicator.classList.add('page-indicator');
+      pageIndicator.textContent = `Page ${currentPageIndex + 1}/${totalPages}`;
+      container.appendChild(pageIndicator);
+      
+      // Create cluster buttons for this page
+      for (let i = startIdx; i < endIdx; i++) {
+        const cluster = clusters[i];
+        const button = document.createElement('button');
+        button.classList.add('cluster-button');
+        button.textContent = `Cluster ${cluster.clusterId}`;
+        button.addEventListener('click', () => {
+          // Remove active class from all buttons
+          document.querySelectorAll('.cluster-button').forEach(btn => {
+            btn.classList.remove('active');
+          });
+          
+          // Add active class to clicked button
+          button.classList.add('active');
+          
+          // Show this cluster on the map
+          toggleClusterVisibility(i);
+        });
+        container.appendChild(button);
+      }
+      
+      // Update button states
+      prevButton.disabled = currentPageIndex === 0;
+      nextButton.disabled = currentPageIndex === totalPages - 1;
+    }
+    
+    // Initial render
+    renderClusterPage();
+  }
 
         function initMap() {
             map = L.map('map').setView([20.5937, 78.9629], 5);
@@ -147,6 +259,8 @@
                 .then(data => {
                     clusters = data.clusters;
                     displayClusters(clusters);
+
+                    initClusterNavigation(clusters);
                 })
                 .catch(error => console.error('Error fetching clusters:', error));
 
@@ -314,9 +428,6 @@ function processRoutesWithDelay(cluster, deliveries, routeIndex, clusterLayerGro
       }
 
      function displayClusters(clusters) {
-              const clustersInfoDiv = document.getElementById('clustersInfo');
-               clustersInfoDiv.innerHTML = '';
-
               // Process each cluster one at a time
                processClusterSequentially(clusters, 0);
 
@@ -325,81 +436,75 @@ function processRoutesWithDelay(cluster, deliveries, routeIndex, clusterLayerGro
 
     function processClusterSequentially(clusters, clusterIndex) {
     // Base case: if we've processed all clusters, we're done
-    if (clusterIndex >= clusters.length) {
-           return;
-       }
+        if (clusterIndex >= clusters.length) {
+            return;
+        }
 
-    const cluster = clusters[clusterIndex];
-    const clustersInfoDiv = document.getElementById('clustersInfo');
+        const cluster = clusters[clusterIndex];
+        const clustersInfoDiv = document.getElementById('clustersInfo');
 
-    // Calculate total weight and volume for the cluster
-    const totalWeight = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.weight || 0), 0);
-    const totalVolume = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.volume || 0), 0);
+        // Calculate total weight and volume for the cluster
+        const totalWeight = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.weight || 0), 0);
+        const totalVolume = cluster.deliveries.reduce((sum, delivery) => sum + (delivery.volume || 0), 0);
 
-    // Store these values in the cluster object for later use
-    cluster.totalWeight = totalWeight;
-    cluster.totalVolume = totalVolume;
+        // Store these values in the cluster object for later use
+        cluster.totalWeight = totalWeight;
+        cluster.totalVolume = totalVolume;
 
-    const clusterButton = document.createElement('div');
-    clusterButton.classList.add('cluster-info');
-    clusterButton.innerHTML = `Cluster ${cluster.clusterId}`;
-    clusterButton.addEventListener('click', () => toggleClusterVisibility(clusterIndex));
-    clustersInfoDiv.appendChild(clusterButton);
+        const clusterLayerGroup = L.layerGroup().addTo(map);
+        markerLayers.push(clusterLayerGroup);
 
-    const clusterLayerGroup = L.layerGroup().addTo(map);
-    markerLayers.push(clusterLayerGroup);
+        // Get unique color for the entire cluster
+        const clusterColor = getUniqueClusterColor(clusterIndex);
 
-    // Get unique color for the entire cluster
-    const clusterColor = getUniqueClusterColor(clusterIndex);
-
-    // Sort deliveries by stop order
-    const sortedDeliveries = [...cluster.deliveries].sort((a, b) => a.stopOrder - b.stopOrder);
+        // Sort deliveries by stop order
+        const sortedDeliveries = [...cluster.deliveries].sort((a, b) => a.stopOrder - b.stopOrder);
 
     // Add origin markers for each delivery in sortedDeliveries
-    sortedDeliveries.forEach((delivery, index) => {
-        L.marker(
-            [cluster.allOriginCoordinates[index].lat, cluster.allOriginCoordinates[index].lng],
-            {
-                icon: L.icon({
-                    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
-                    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png'
-                })
-            }
-        )
-            .bindTooltip(
-                `Cluster ID: ${cluster.clusterId}<br>Origin Pincode: ${delivery.originPincode} - Origin ${index + 1}`,
+        sortedDeliveries.forEach((delivery, index) => {
+            L.marker(
+                [cluster.allOriginCoordinates[index].lat, cluster.allOriginCoordinates[index].lng],
                 {
-                    permanent: false,
-                    direction: 'top',
-                    className: 'marker-label'
+                    icon: L.icon({
+                        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png',
+                        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png'
+                    })
                 }
             )
-            .addTo(clusterLayerGroup);
-    });
+                .bindTooltip(
+                    `Cluster ID: ${cluster.clusterId}<br>Origin Pincode: ${delivery.originPincode} - Origin ${index + 1}`,
+                    {
+                        permanent: false,
+                        direction: 'top',
+                        className: 'marker-label'
+                    }
+                )
+                .addTo(clusterLayerGroup);
+        });
 
     // Add destination markers for all deliveries
-    cluster.deliveries.forEach(delivery => {
-        L.circleMarker([delivery.coordinates.lat, delivery.coordinates.lng], {
-            radius: 10,
-            fillColor: 'red',
-            color: '#000',
-            weight: 1,
-            opacity: 1,
-            fillOpacity: 0.8
-        })
-            .bindTooltip(
-                `Delivery ID: ${delivery.deliveryId}<br>Destination Pincode: ${delivery.destinationPincode}<br>Drop Sequence: ${delivery.stopOrder}`,
-                {
-                    permanent: false,
-                    direction: 'top',
-                    className: 'marker-label'
-                }
-            )
-            .addTo(clusterLayerGroup);
-    });
+        cluster.deliveries.forEach(delivery => {
+            L.circleMarker([delivery.coordinates.lat, delivery.coordinates.lng], {
+                radius: 10,
+                fillColor: 'red',
+                color: '#000',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.8
+            })
+                .bindTooltip(
+                    `Delivery ID: ${delivery.deliveryId}<br>Destination Pincode: ${delivery.destinationPincode}<br>Drop Sequence: ${delivery.stopOrder}`,
+                    {
+                        permanent: false,
+                        direction: 'top',
+                        className: 'marker-label'
+                    }
+                )
+                .addTo(clusterLayerGroup);
+        });
 
-    // Global variable to track cluster route details
-    cluster.totalRouteDistance = 0;
+       // Global variable to track cluster route details
+       cluster.totalRouteDistance = 0;
 
     // Process routes with delay between requests
     processRoutesWithDelay(cluster, sortedDeliveries, 0, clusterLayerGroup, clusterColor)
@@ -412,7 +517,7 @@ function processRoutesWithDelay(cluster, deliveries, routeIndex, clusterLayerGro
             // Continue with next cluster even if there's an error
             processClusterSequentially(clusters, clusterIndex + 1);
         });
-    }
+     }
 
         function toggleClusterVisibility(selectedClusterIndex) {
             // Hide all clusters first
