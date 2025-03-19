@@ -46,6 +46,7 @@ const initializeRateLimiters = async () => {
 };
 app.use(express.static(path.join(__dirname, "public")));
 const upload = multer({ dest: "tmp/" });
+// const upload = multer({ storage: multer.memoryStorage() }); // Use memory storage
 
 function readCsv(filePath) {
   return new Promise((resolve, reject) => {
@@ -82,30 +83,6 @@ function writeCsv(filePath, data) {
       .on("error", reject);
   });
 }
-
-async function cleanupTmpFolder() {
-  console.log("Entered cleanupTmpFolder function..")
-  const tmpFolder = path.join(__dirname, "tmp");
-
-  fs.readdir(tmpFolder, (err, files) => {
-    if (err) {
-      console.error("Error reading tmp folder:", err);
-      return;
-    }
-
-    for (const file of files) {
-      const filePath = path.join(tmpFolder, file);
-      fs.unlink(filePath, (err) => {
-        if (err) {
-          console.error(`Failed to delete ${filePath}:`, err);
-        } else {
-          console.log(`Deleted: ${filePath}`);
-        }
-      });
-    }
-  });
-}
-
 
 function calculateDistance(coord1, coord2) {
   try {
@@ -245,22 +222,18 @@ async function getCoordinates(pincode) {
     if (!nominatimLimit) {
       await initializeRateLimiters();
     }
-
-    // Add "India" to the query for Indian pincodes (6-digit codes)
-   const searchQuery = pincode.toString().length === 6 ? `${pincode}, India` : pincode;
     
     // Use the rate limiter for Nominatim API
     const response = await nominatimLimit(() => axios.get(NOMINATIM_BASE_URL, {
       params: {
-        q: searchQuery,
+        q: pincode,
         format: 'json',
-        limit: 1,
-        countrycodes: 'in'
+        limit: 1
       },
       headers: {
         'User-Agent': 'DeliveryOptimizationApp/1.0'
       },
-      timeout: 30000 // 10 second timeout
+      timeout: 10000 // 10 second timeout
     }));
 
     if (response.data && response.data.length > 0) {
@@ -918,7 +891,6 @@ app.post("/optimize", upload.fields([
 
 app.get("/check-optimization-status", (req, res) => {
   if (globalClusters.length > 0) {
-    cleanupTmpFolder();
     res.json({ status: "complete" });
   } else {
     res.json({ status: "processing" });
