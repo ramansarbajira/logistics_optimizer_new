@@ -416,18 +416,24 @@ function determineTruckModel(clusterVolume, clusterWeight, truckModels) {
   let selectedTruck = null;
 
   // Sort truck models by volume capacity in ascending order
-  const sortedTrucks = truckModels.sort((a, b) => 
-    parseFloat(a["usable_volume_cft"]) - parseFloat(b["usable_volume_cft"])
-  );
+  // Handle both file formats using OR conditions
+  const sortedTrucks = truckModels.sort((a, b) => {
+    // Get volume from either format (File1 OR File2)
+    const volumeA = parseFloat(a["usable_volume_cft"] || a["Volume(CFT)"]);
+    const volumeB = parseFloat(b["usable_volume_cft"] || b["Volume(CFT)"]);
+    return volumeA - volumeB;
+  });
 
   for (const truck of sortedTrucks) {
-    const volumeCapacity = parseFloat(truck["usable_volume_cft"]);
-    const weightCapacity = parseFloat(truck["payload_kgs"]);
+    // Handle either file format using OR conditions
+    const volumeCapacity = parseFloat(truck["usable_volume_cft"] || truck["Volume(CFT)"]);
+    const weightCapacity = parseFloat(truck["payload_kgs"] || truck["Capacity(kg)"]);
+    const truckName = truck["truck_name"] || truck["Vehicle Type"];
 
-    console.log(`Checking truck: ${truck["truck_name"]}, Volume Capacity: ${volumeCapacity}, Weight Capacity: ${weightCapacity}`);
+    console.log(`Checking truck: ${truckName}, Volume Capacity: ${volumeCapacity}, Weight Capacity: ${weightCapacity}`);
 
     if (clusterVolume <= volumeCapacity && clusterWeight <= weightCapacity) {
-      selectedTruck = truck["truck_name"];
+      selectedTruck = truckName;
       console.log(`Selected Truck: ${selectedTruck}`);
       break;
     }
@@ -439,6 +445,7 @@ function determineTruckModel(clusterVolume, clusterWeight, truckModels) {
 
   return selectedTruck;
 }
+
 
 // async function createGeographicalClusters(deliveries) {
 //   console.log("Creating geographical clusters for", deliveries.length, "deliveries");
@@ -793,48 +800,69 @@ async function assignTrucksToCluster(cluster, truckModels) {
   // Round to two decimal places
   totalRouteDistance = Math.round(totalRouteDistance * 100) / 100;
 
+  // Handle both file formats for truck name comparison
+  const isTataAce = truckModel === "TATA ACE" || truckModel === "TATA ACE";
+  
   // If TATA ACE is selected and route distance exceeds 100 km
-  if (truckModel === "TATA ACE" && totalRouteDistance > 100) {
+  if (isTataAce && totalRouteDistance > 100) {
+    // Find TATA ACE in truck models list using either format
+    const tataAceTruck = truckModels.find(truck => 
+      (truck["truck_name"] === "TATA ACE") || (truck["Vehicle Type"] === "TATA ACE")
+    );
+    
+    // Get volume capacity of TATA ACE using either format
+    const tataAceVolumeCapacity = tataAceTruck 
+      ? parseFloat(tataAceTruck["usable_volume_cft"] || tataAceTruck["Volume(CFT)"])
+      : 0;
+    
     // Sort truck models by volume capacity in ascending order, starting from the next truck after TATA ACE
     const sortedTrucks = truckModels
       .filter(truck => {
         // Only consider trucks with higher volume capacity than TATA ACE
-        const currentVolumeCapacity = truckModels.find(t => t["truck_name"] === "TATA ACE")["usable_volume_cft"];
-        return parseFloat(truck["usable_volume_cft"]) > parseFloat(currentVolumeCapacity);
+        const truckVolumeCapacity = parseFloat(truck["usable_volume_cft"] || truck["Volume(CFT)"]);
+        return truckVolumeCapacity > tataAceVolumeCapacity;
       })
-      .sort((a, b) => parseFloat(a["usable_volume_cft"]) - parseFloat(b["usable_volume_cft"]));
+      .sort((a, b) => {
+        const volumeA = parseFloat(a["usable_volume_cft"] || a["Volume(CFT)"]);
+        const volumeB = parseFloat(b["usable_volume_cft"] || b["Volume(CFT)"]);
+        return volumeA - volumeB;
+      });
 
     // Try to find a suitable truck that can handle the volume, weight, and distance
     for (const truck of sortedTrucks) {
-      const volumeCapacity = parseFloat(truck["usable_volume_cft"]);
-      const weightCapacity = parseFloat(truck["payload_kgs"]);
-      const maxTripDistance = getDailyTravelDistance(truck["truck_name"]);
+      const volumeCapacity = parseFloat(truck["usable_volume_cft"] || truck["Volume(CFT)"]);
+      const weightCapacity = parseFloat(truck["payload_kgs"] || truck["Capacity(kg)"]);
+      const truckName = truck["truck_name"] || truck["Vehicle Type"];
+      const maxTripDistance = getDailyTravelDistance(truckName);
 
       if (cluster.totalVolume <= volumeCapacity &&
           cluster.totalWeight <= weightCapacity &&
           totalRouteDistance <= maxTripDistance) {
-        truckModel = truck["truck_name"];
+        truckModel = truckName;
         break;
       }
     }
   }
 
-  // Verify the truck's payload capacity
-  const selectedTruck = truckModels.find(truck => truck["truck_name"] === truckModel);
+  // Verify the truck's payload capacity - check both formats
+  const selectedTruck = truckModels.find(truck => 
+    (truck["truck_name"] === truckModel) || (truck["Vehicle Type"] === truckModel)
+  );
 
   if (selectedTruck) {
-    const payloadCapacity = parseFloat(selectedTruck["payload_kgs"]);
-    const maxTripDistance = getDailyTravelDistance(truckModel);
+    // Handle either format using OR conditions
+    const volumeCapacity = parseFloat(selectedTruck["usable_volume_cft"] || selectedTruck["Volume(CFT)"]);
+    const payloadCapacity = parseFloat(selectedTruck["payload_kgs"] || selectedTruck["Capacity(kg)"]);
+    const truckName = selectedTruck["truck_name"] || selectedTruck["Vehicle Type"];
+    const maxTripDistance = getDailyTravelDistance(truckName);
 
     // Check both volume and payload constraints, and calculate delivery days
-    if (cluster.totalVolume <= parseFloat(selectedTruck["usable_volume_cft"]) &&
-        cluster.totalWeight <= payloadCapacity) {
-
+    if (cluster.totalVolume <= volumeCapacity && cluster.totalWeight <= payloadCapacity) {
       // Calculate total delivery days for the entire cluster
       const totalDeliveryDays = calculateDeliveryDays(totalRouteDistance, maxTripDistance);
 
       cluster.deliveries.forEach((delivery) => {
-        delivery.Assigned_Truck = truckModel;
+        delivery.Assigned_Truck = truckName;
         // Remove DeliveryDays property from output, but keep calculation for internal use
         delivery._calculatedDeliveryDays = totalDeliveryDays;
       });
@@ -844,7 +872,7 @@ async function assignTrucksToCluster(cluster, truckModels) {
 
       // Log cluster details
       console.log(`Cluster ${cluster.id} Details:`);
-      console.log(`- Assigned Truck: ${truckModel}`);
+      console.log(`- Assigned Truck: ${truckName}`);
       console.log(`- Total Route Distance: ${totalRouteDistance.toFixed(2)} km`);
       console.log(`- Max Trip Distance: ${maxTripDistance} km`);
       console.log(`- Total Deliveries: ${cluster.deliveries.length}`);
@@ -868,23 +896,31 @@ async function assignTrucksToCluster(cluster, truckModels) {
 }
 
 function getDailyTravelDistance(truckModel) {
-  console.log("Entered getDailyTravelDistance");
-  switch (truckModel) {
-    case "TATA ACE":
-      return 100; // Total trip distance, not daily distance
-    case "TATA 407":
-      return 200;
-    case "EICHER 17 FEET":
-      return 250;
-    case "CONTAINER 20 FT":
-       return 450;
-    case "CONTAINER 32 FT SXL":
-       return 450;
-    case "CONTAINER 32 FT MXL":
-       return 450;
-    default:
-      return 450;
-  }
+  console.log("Entered getDailyTravelDistance for truck:", truckModel);
+  
+  // Map of truck names from both formats to their daily travel distances
+  const truckDistanceMap = {
+    // From Truck_master.csv format
+    "TATA ACE": 100,
+    "TATA 407": 200,
+    "EICHER 17 FEET": 250,
+    "CONTAINER 20 FT": 450,
+    "CONTAINER 32 FT SXL": 450,
+    "CONTAINER 32 FT MXL": 450,
+    
+    // From Truck_master0102.csv format
+    "TATA ACE": 100, // Same name in both formats
+    "TATA_407_FC": 200,
+    "17FT_FC": 250,
+    "20FT_SXL_FC": 450,
+    "32FT_SXL_FC_9MT": 450,
+    "32FT_MXL_FC_14MT": 450
+  };
+  
+  // Get the distance or use default of 450 if not found
+  const distance = truckDistanceMap[truckModel] || 450;
+  console.log(`Daily travel distance for ${truckModel}: ${distance}km`);
+  return distance;
 }
 
 async function optimizeStopOrder(cluster) {
